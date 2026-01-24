@@ -77,3 +77,42 @@ Instructions:
 Answer:"""
     
     return prompt
+
+
+def get_batch_answer_generation_prompt(chunk: str, questions: List[str]) -> str:
+    """
+    Generate prompt for batch answer generation (all questions in one call).
+    
+    Args:
+        chunk: Text chunk containing the context
+        questions: List of questions to answer
+        
+    Returns:
+        Formatted prompt string
+    """
+    questions_list = "\n".join([f"{i+1}. {q}" for i, q in enumerate(questions)])
+    
+    prompt = f"""You are an expert financial analyst. Answer the following questions based strictly on the provided text chunk from an annual report.
+
+Text chunk:
+{chunk}
+
+Questions:
+{questions_list}
+
+Instructions:
+1. Answer each question based ONLY on the information in the text chunk above
+2. If the answer is not in the chunk, state "The information is not available in the provided text"
+3. Be precise and factual
+4. Include relevant details from the chunk
+5. Keep your answers concise but complete
+6. Do not make assumptions or add information not in the chunk
+7. Format your response as a JSON array of strings, one answer per question in the same order
+8. Each answer should correspond to the question at the same index position
+
+Example format:
+["Answer to question 1", "Answer to question 2", ...]
+
+Return only the JSON array, no additional text."""
+    
+    return prompt

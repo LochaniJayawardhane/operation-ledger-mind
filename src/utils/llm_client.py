@@ -153,3 +153,54 @@ class LLMClient:
         prompt = get_answer_generation_prompt(chunk, question)
         answer = self.generate(prompt)
         return answer.strip()
+    
+    def generate_answers(self, chunk: str, questions: List[str]) -> List[str]:
+        """
+        Generate answers to multiple questions in one call based on chunk context.
+        
+        Args:
+            chunk: Text chunk containing context
+            questions: List of questions to answer
+            
+        Returns:
+            List of generated answers in the same order as questions
+        """
+        from .prompts import get_batch_answer_generation_prompt
+        
+        prompt = get_batch_answer_generation_prompt(chunk, questions)
+        response = self.generate(prompt)
+        
+        # Parse JSON response
+        try:
+            # Try to extract JSON array from response
+            response = response.strip()
+            # Remove markdown code blocks if present
+            if response.startswith('```'):
+                response = response.split('```')[1]
+                if response.startswith('json'):
+                    response = response[4:]
+                response = response.strip()
+            
+            answers = json.loads(response)
+            if isinstance(answers, list):
+                # Ensure we have the same number of answers as questions
+                answers = [str(a).strip() if a else "The information is not available in the provided text" 
+                          for a in answers]
+                # Pad or truncate to match question count
+                if len(answers) < len(questions):
+                    answers.extend(["The information is not available in the provided text"] * 
+                                 (len(questions) - len(answers)))
+                elif len(answers) > len(questions):
+                    answers = answers[:len(questions)]
+                return answers
+            else:
+                raise ValueError("Response is not a list")
+        except json.JSONDecodeError as e:
+            # Fallback: try to split by newlines or numbers
+            # This is a fallback, ideally the LLM should return JSON
+            lines = [line.strip() for line in response.split('\n') if line.strip()]
+            if len(lines) >= len(questions):
+                return lines[:len(questions)]
+            else:
+                # If parsing fails, return error messages
+                raise ValueError(f"Failed to parse answers from response: {response[:200]}")

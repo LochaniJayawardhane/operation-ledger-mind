@@ -49,28 +49,33 @@ def generate_qa_pairs(
     elif len(questions) > 10:
         questions = questions[:10]
     
-    # Step B: Generate answers for each question
+    # Step B: Generate all answers in one batch call
+    try:
+        answers = answer_llm.generate_answers(chunk_text, questions)
+    except Exception as e:
+        raise RuntimeError(f"Failed to generate answers for chunk {chunk_id}: {str(e)}")
+    
+    # Step C: Combine questions and answers into pairs
     qa_pairs = []
     for i, question in enumerate(questions):
         if not question or len(question.strip()) == 0:
             continue
         
-        try:
-            answer = answer_llm.generate_answer(chunk_text, question)
-            
-            # Infer category from question (simple heuristic)
-            category = _infer_category(question, categories)
-            
-            qa_pairs.append({
-                'question': question,
-                'answer': answer,
-                'chunk_id': chunk_id,
-                'category': category
-            })
-        except Exception as e:
-            # Log error but continue with other questions
-            print(f"Warning: Failed to generate answer for question {i+1} in chunk {chunk_id}: {str(e)}")
-            continue
+        # Get corresponding answer (should be at same index)
+        if i < len(answers):
+            answer = answers[i]
+        else:
+            answer = "The information is not available in the provided text"
+        
+        # Infer category from question (simple heuristic)
+        category = _infer_category(question, categories)
+        
+        qa_pairs.append({
+            'question': question,
+            'answer': answer,
+            'chunk_id': chunk_id,
+            'category': category
+        })
     
     return qa_pairs
 
