@@ -1,0 +1,230 @@
+# ============================================================================
+# Operation Ledger-Mind – Global Configuration
+# Financial Intelligence System (Fine-Tuning vs RAG)
+# ============================================================================
+
+project:
+  name: operation-ledger-mind
+  domain: financial_intelligence
+  organization: alpha_yield_capital
+  report_year: 2024
+  document: 2024-Annual-Report.pdf
+
+# ============================================================================
+# Runtime Environment
+# ============================================================================
+environment:
+  execution:
+    preferred_gpu: T4
+    allow_cpu_fallback: true
+  paths:
+    data_dir: data
+    raw_data: data/raw
+    processed_data: data/processed
+    models_dir: models
+    logs_dir: logs
+    reports_dir: reports
+
+# ============================================================================
+# LLM Providers
+# ============================================================================
+providers:
+  enabled:
+    - openai
+    - huggingface
+  default: openai
+
+  openai:
+    timeout_seconds: 60
+    max_retries: 3
+
+  huggingface:
+    device_map: auto
+    trust_remote_code: true
+
+# ============================================================================
+# Data Factory (Part 1)
+# ============================================================================
+data_factory:
+  ingestion:
+    remove_headers: true
+    remove_footers: true
+    normalize_whitespace: true
+
+  chunking:
+    strategy: character
+    chunk_size: 1500
+    overlap: 0
+
+  generation:
+    questions_per_chunk: 10
+
+    categories:
+      - hard_facts
+      - strategic_summary
+      - stylistic_creative
+
+    question_llm:
+      provider: openai
+      model: gpt-4o-mini
+      temperature: 0.3
+      max_tokens: 300
+
+    answer_llm:
+      provider: openai
+      model: gpt-4o
+      temperature: 0.2
+      max_tokens: 800
+
+  dataset:
+    output_format: jsonl
+    train_split: 0.8
+    test_split: 0.2
+    train_file: train.jsonl
+    test_file: golden_test_set.jsonl
+    shuffle_before_split: true
+    seed: 42
+
+# ============================================================================
+# Fine-Tuning – "The Intern" (Part 2)
+# ============================================================================
+finetuning:
+  base_model: meta-llama/Meta-Llama-3-8B-Instruct
+
+  quantization:
+    enabled: true
+    load_in_4bit: true
+    quant_type: nf4
+    double_quant: true
+    compute_dtype: bfloat16
+
+  lora:
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    target_modules:
+      - q_proj
+      - k_proj
+      - v_proj
+      - o_proj
+    bias: none
+    task_type: CAUSAL_LM
+
+  training:
+    trainer: SFTTrainer
+    min_steps: 100
+    num_epochs: 1
+    batch_size: 2
+    gradient_accumulation_steps: 4
+    learning_rate: 2e-4
+    logging_steps: 10
+    save_steps: 50
+    warmup_ratio: 0.03
+    max_seq_length: 2048
+
+  inference:
+    function_name: query_intern
+    max_new_tokens: 512
+    temperature: 0.2
+    top_p: 0.95
+
+# ============================================================================
+# Advanced RAG – "The Librarian" (Part 3)
+# ============================================================================
+rag:
+  vector_db:
+    provider: weaviate
+    mode: cloud   # cloud | embedded
+    class_name: FinancialDocument
+    text_key: content
+
+  embeddings:
+    model: sentence-transformers/all-MiniLM-L6-v2
+    batch_size: 32
+    normalize: true
+
+  retrieval:
+    hybrid_search: true
+    dense_weight: 0.5
+    bm25_weight: 0.5
+    top_k: 20
+
+  refinement:
+    rrf:
+      enabled: true
+      k: 60
+
+    reranker:
+      enabled: true
+      model: cross-encoder/ms-marco-MiniLM-L-6-v2
+      top_k: 5
+
+  inference:
+    function_name: query_librarian
+    answer_llm:
+      provider: openai
+      model: gpt-4o
+      temperature: 0.2
+      max_tokens: 600
+
+# ============================================================================
+# Evaluation & Showdown (Part 4)
+# ============================================================================
+evaluation:
+  metrics:
+    rouge_l:
+      enabled: true
+
+    llm_judge:
+      enabled: true
+      provider: openai
+      model: gpt-4o
+      scale: [1, 5]
+      criteria:
+        - faithfulness
+        - accuracy
+
+  latency:
+    enabled: true
+    runs_per_query: 3
+    report_unit: milliseconds
+
+# ============================================================================
+# Cost Analysis (Bonus)
+# ============================================================================
+cost_analysis:
+  users_per_day: 500
+  queries_per_user: 10
+  days_per_month: 30
+
+  infrastructure:
+    intern:
+      instance_type: g4dn.xlarge
+      hourly_cost_usd: 0.526
+    librarian:
+      instance_type: g5.xlarge
+      hourly_cost_usd: 1.006
+
+  assumptions:
+    utilization_percent: 60
+    disclaimer: "Estimated costs based on public AWS pricing."
+
+# ============================================================================
+# Logging & Experiment Tracking
+# ============================================================================
+logging:
+  enabled: true
+  log_latency: true
+  log_costs: true
+  log_tokens: true
+  output_file: logs/experiment_runs.csv
+  console_level: info
+
+# ============================================================================
+# Development & Debug
+# ============================================================================
+development:
+  seed: 42
+  deterministic: true
+  debug: false
+  dry_run: false
