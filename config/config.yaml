@@ -52,9 +52,15 @@ data_factory:
     normalize_whitespace: true
 
   chunking:
-    strategy: character
-    chunk_size: 1500
-    overlap: 0
+    # strategy: semantic | character
+    # - semantic: sentence-aware, section-aware, token-budget-based chunking
+    # - character: legacy fixed-width character chunks
+    strategy: semantic
+    # Interpreted as target tokens when strategy=semantic, or characters for legacy mode.
+    chunk_size: 450
+    # When strategy=semantic: fractional token overlap (e.g. 0.15 = 15%).
+    # When strategy=character: character overlap.
+    overlap: 0.15
 
   generation:
     questions_per_chunk: 10
@@ -91,12 +97,22 @@ data_factory:
 finetuning:
   base_model: meta-llama/Meta-Llama-3-8B-Instruct
 
+  # Paths for fine-tuning artifacts/data. If omitted, code will fall back to:
+  # - train: data/output/<data_factory.dataset.train_file>
+  # - eval:  data/output/<data_factory.dataset.test_file>
+  # - output_dir: models/intern_adapter
+  data:
+    train_file: data/output/train.jsonl
+    eval_file: data/output/golden_test_set.jsonl
+  output_dir: models/intern_adapter
+
   quantization:
     enabled: true
     load_in_4bit: true
     quant_type: nf4
     double_quant: true
-    compute_dtype: bfloat16
+    # Colab T4: use float16. (bfloat16 is better on newer GPUs like A100/H100.)
+    compute_dtype: float16
 
   lora:
     r: 16
