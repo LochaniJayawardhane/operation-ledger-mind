@@ -25,22 +25,22 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tupl
 
 from .semantic_types import ChunkMetadata, PageSpan, TextUnit, infer_page_range
 
-TokenCounter = Callable[[str], int]
+SizeCounter = Callable[[str], int]
 
 
 @dataclass(frozen=True)
 class SemanticChunkingConfig:
     """
-    Configuration for semantic, token-budget-aware chunking.
+    Configuration for semantic, character-budget-aware chunking.
 
     The defaults are tuned for:
-    - Target chunk size: ~300–600 tokens
-    - Overlap: ~15%
+    - Target chunk size: ~1500 characters
+    - Overlap: ~15% of characters
     """
 
-    min_tokens: int = 300
-    max_tokens: int = 600
-    target_tokens: int = 450
+    min_chars: int = 900
+    max_chars: int = 1800
+    target_chars: int = 1500
     overlap_ratio: float = 0.15  # 10–20% recommended
 
     # Controls for sentence splitting and block detection
@@ -51,16 +51,11 @@ class SemanticChunkingConfig:
     strip_boilerplate: bool = True
 
 
-def _default_token_counter(text: str) -> int:
+def _default_size_counter(text: str) -> int:
     """
-    Very lightweight token counter that approximates LLM/BPE tokens.
-
-    For production, we recommend passing a true tokenizer, e.g. a Hugging Face
-    tokenizer or tiktoken encoder, via the `token_counter` argument.
+    Default size counter that simply returns the character length of the text.
     """
-    # Heuristic: word count * 1.3 approximates BPE tokens reasonably well
-    words = re.findall(r"\S+", text)
-    return max(1, int(len(words) * 1.3))
+    return len(text)
 
 
 def _load_spacy_sentence_segmenter() -> Optional[Callable[[str], List[Tuple[int, int]]]]:
@@ -374,17 +369,17 @@ def assemble_chunks_with_overlap(
     units: Sequence[TextUnit],
     *,
     config: Optional[SemanticChunkingConfig] = None,
-    token_counter: Optional[TokenCounter] = None,
+    size_counter: Optional[SizeCounter] = None,
     page_spans: Optional[Sequence[PageSpan]] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Assemble semantic units into overlapping chunks under a token budget.
+    Assemble semantic units into overlapping chunks under a character budget.
 
     - Chunks are constructed so that:
       - They do not break individual `TextUnit`s (sentences, bullet blocks, tables).
-      - They aim for `config.target_tokens` within [min_tokens, max_tokens].
+      - They aim for `config.target_chars` within [min_chars, max_chars].
       - Overlap is enforced at the *unit* level, preserving coherent context
-        rather than raw token slices.
+        rather than raw character slices.
     - Each chunk is returned as a dict with:
       - 'chunk_id', 'text'
       - 'start_char', 'end_char'
@@ -392,24 +387,24 @@ def assemble_chunks_with_overlap(
     """
     if config is None:
         config = SemanticChunkingConfig()
-    if token_counter is None:
-        token_counter = _default_token_counter
+    if size_counter is None:
+        size_counter = _default_size_counter
 
     chunks: List[Dict[str, Any]] = []
     if not units:
         return chunks
 
     current_units: List[TextUnit] = []
-    current_tokens = 0
+    current_size = 0
     chunk_id = 0
     current_section: Optional[str] = None
 
     def flush_chunk(force: bool = False) -> None:
-        nonlocal chunk_id, current_units, current_tokens, current_section
+        nonlocal chunk_id, current_units, current_size, current_section
         if not current_units:
             return
 
-        if not force and current_tokens < max(config.min_tokens, int(0.5 * config.target_tokens)):
+        if not force and current_size < max(config.min_chars, int(0.5 * config.target_chars)):
             return
 
         chunk_text = "\n".join(u.text for u in current_units)
@@ -431,7 +426,7 @@ def assemble_chunks_with_overlap(
             source_section=section,
             page_start=page_start,
             page_end=page_end,
-            num_tokens=current_tokens,
+            num_tokens=current_size,
             num_units=len(current_units),
         )
 
@@ -447,48 +442,48 @@ def assemble_chunks_with_overlap(
         chunk_id += 1
 
         # Compute overlap suffix for continuity
-        overlap_tokens_target = int(current_tokens * config.overlap_ratio)
-        if overlap_tokens_target <= 0:
+        overlap_size_target = int(current_size * config.overlap_ratio)
+        if overlap_size_target <= 0:
             current_units = []
-            current_tokens = 0
+            current_size = 0
             return
 
         suffix_units: List[TextUnit] = []
-        tokens_acc = 0
+        size_acc = 0
         # Walk backwards until we reach the overlap budget
         for u in reversed(current_units):
-            u_tokens = token_counter(u.text)
+            u_size = size_counter(u.text)
             suffix_units.append(u)
-            tokens_acc += u_tokens
-            if tokens_acc >= overlap_tokens_target:
+            size_acc += u_size
+            if size_acc >= overlap_size_target:
                 break
         suffix_units.reverse()
 
         current_units = suffix_units
-        current_tokens = sum(token_counter(u.text) for u in current_units)
+        current_size = sum(size_counter(u.text) for u in current_units)
 
     for unit in units:
         # Update section state when we encounter headers
         if unit.kind == "header" and unit.section_hint:
             current_section = unit.section_hint
 
-        unit_tokens = token_counter(unit.text)
+        unit_size = size_counter(unit.text)
 
         # If a single unit is too large, we still include it as its own chunk.
-        if unit_tokens >= config.max_tokens and not current_units:
+        if unit_size >= config.max_chars and not current_units:
             current_units = [unit]
-            current_tokens = unit_tokens
+            current_size = unit_size
             flush_chunk(force=True)
             current_units = []
-            current_tokens = 0
+            current_size = 0
             continue
 
         # Check if adding this unit would overflow the budget
-        if current_tokens + unit_tokens > config.max_tokens and current_units:
+        if current_size + unit_size > config.max_chars and current_units:
             flush_chunk(force=False)
 
         current_units.append(unit)
-        current_tokens += unit_tokens
+        current_size += unit_size
 
     # Flush remaining units
     flush_chunk(force=True)
@@ -500,7 +495,7 @@ def semantic_chunk_text(
     text: str,
     *,
     config: Optional[SemanticChunkingConfig] = None,
-    token_counter: Optional[TokenCounter] = None,
+    size_counter: Optional[SizeCounter] = None,
     page_spans: Optional[Sequence[PageSpan]] = None,
 ) -> List[Dict[str, Any]]:
     """
@@ -515,7 +510,7 @@ def semantic_chunk_text(
     return assemble_chunks_with_overlap(
         units,
         config=config,
-        token_counter=token_counter,
+        size_counter=size_counter,
         page_spans=page_spans,
     )
 
@@ -533,16 +528,16 @@ def _character_chunk_text(
     """
     if not text or len(text.strip()) == 0:
         return []
-
+    
     chunks: List[Dict[str, Any]] = []
     text_length = len(text)
     start = 0
     chunk_id = 0
-
+    
     while start < text_length:
         end = min(start + chunk_size, text_length)
         chunk_text = text[start:end]
-
+        
         if chunk_text.strip():
             chunks.append(
                 {
@@ -564,12 +559,12 @@ def _character_chunk_text(
                 }
             )
             chunk_id += 1
-
+        
         if end >= text_length:
             break
-
+        
         start = max(0, end - overlap)
-
+    
     return chunks
 
 
@@ -579,7 +574,7 @@ def chunk_text(
     overlap: float = 0.0,
     *,
     strategy: str = "semantic",
-    token_counter: Optional[TokenCounter] = None,
+    size_counter: Optional[SizeCounter] = None,
     page_spans: Optional[Sequence[PageSpan]] = None,
 ) -> List[Dict[str, Any]]:
     """
@@ -590,17 +585,15 @@ def chunk_text(
     text:
         Cleaned document text.
     chunk_size:
-        - When `strategy="character"`: maximum characters per chunk.
-        - When `strategy="semantic"`: approximate *target* token count
-          for each chunk (within the [min_tokens, max_tokens] bounds).
+        Maximum characters per chunk (both strategies).
+        For semantic mode this is the *target* character count.
     overlap:
         - When `strategy="character"`: number of overlapping characters.
         - When `strategy="semantic"`: fractional overlap ratio in [0, 1].
     strategy:
         "semantic" (default) or "character".
-    token_counter:
-        Optional callable that returns the token count for a text segment.
-        If omitted, a lightweight heuristic counter is used.
+    size_counter:
+        Optional callable that returns the size of a text segment (default: len()).
     page_spans:
         Optional page-span mapping for accurate page_start/page_end metadata.
 
@@ -617,21 +610,21 @@ def chunk_text(
     if strategy == "character":
         return _character_chunk_text(text, chunk_size=chunk_size, overlap=int(overlap))
 
-    # Semantic mode
-    min_tokens = int(0.6 * chunk_size)
-    max_tokens = int(1.33 * chunk_size)
+    # Semantic mode — budget is in characters
+    min_chars = int(0.6 * chunk_size)
+    max_chars = int(1.2 * chunk_size)   # allow slight overshoot for sentence boundaries
     overlap_ratio = float(overlap) if 0.0 < overlap < 1.0 else 0.15
 
     sem_config = SemanticChunkingConfig(
-        min_tokens=min_tokens,
-        max_tokens=max_tokens,
-        target_tokens=chunk_size,
+        min_chars=min_chars,
+        max_chars=max_chars,
+        target_chars=chunk_size,
         overlap_ratio=overlap_ratio,
     )
 
     return semantic_chunk_text(
         text,
         config=sem_config,
-        token_counter=token_counter,
+        size_counter=size_counter,
         page_spans=page_spans,
     )
