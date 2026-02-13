@@ -13,3 +13,9 @@ __pycache__/
 
 .env
 .cursor/
+
+# Weaviate embedded data
+.weaviate/
+
+# Model artifacts (regenerated in Colab during fine-tuning)
+models/

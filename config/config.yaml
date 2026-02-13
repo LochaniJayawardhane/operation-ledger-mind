@@ -151,9 +151,11 @@ finetuning:
 rag:
   vector_db:
     provider: weaviate
-    mode: cloud   # cloud | embedded
+    mode: embedded   # embedded | cloud | local
     class_name: FinancialDocument
     text_key: content
+    embedded:
+      persistence_dir: .weaviate
 
   embeddings:
     model: sentence-transformers/all-MiniLM-L6-v2
@@ -178,6 +180,8 @@ rag:
 
   inference:
     function_name: query_librarian
+    # Generator mode: openai | intern_finetuned | intern_base
+    generator_mode: openai
     answer_llm:
       provider: openai
       model: gpt-4o

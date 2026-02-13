@@ -24,6 +24,10 @@ dependencies = [
     "safetensors>=0.4.3",
     "torch>=2.1.0",
     "matplotlib>=3.8.0",
+    # RAG stack – "The Librarian" (Part 3)
+    "weaviate-client>=4.4.0",
+    "sentence-transformers>=2.7.0",
+    "numpy>=1.24.0",
 ]
 
 [build-system]
